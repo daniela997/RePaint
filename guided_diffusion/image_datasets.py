@@ -151,9 +151,6 @@ class ImageDatasetInpa(Dataset):
         self.max_len = max_len
 
     def __len__(self):
-        if self.max_len is not None:
-            return self.max_len
-
         return len(self.local_gts)
 
     def __getitem__(self, idx):
