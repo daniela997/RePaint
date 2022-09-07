@@ -22,6 +22,7 @@ process towards more realistic images.
 import os
 import argparse
 import torch as th
+import torch
 import torch.nn.functional as F
 import time
 import conf_mgt
@@ -121,47 +122,170 @@ def main(conf: conf_mgt.Default_Conf):
             if isinstance(batch[k], th.Tensor):
                 batch[k] = batch[k].to(device)
 
-        model_kwargs = {}
+        input = batch['GT']
+        mask = batch.get('gt_keep_mask')
+        mask_final = batch.get('gt_keep_mask')
+        ### Patchifying input via Torch's unfold
+        
+        # kernel size for window/patch
+        k = 256 
+        # stride / overlap
+        d = 256//2
 
-        model_kwargs["gt"] = batch['GT']
+        ### Pad images to multiple of the window size
+        
+        #hpadding
+        hpad = (k-input.size(2)%k) // 2 
+        #wpadding
+        wpad = (k-input.size(3)%k) // 2 
 
-        gt_keep_mask = batch.get('gt_keep_mask')
-        if gt_keep_mask is not None:
-            model_kwargs['gt_keep_mask'] = gt_keep_mask
+        x = torch.nn.functional.pad(input,(wpad,wpad,hpad,hpad), mode='reflect') 
+        c, h, w = x.size(1), x.size(2), x.size(3)
+        mask = torch.nn.functional.pad(mask,(wpad,wpad,hpad,hpad), mode='reflect') 
 
-        batch_size = model_kwargs["gt"].shape[0]
+        ### Unfold into patches
+        patches_input = x.unfold(2, k, d).unfold(3, k, d) 
+        patches_mask = mask.unfold(2, k, d).unfold(3, k, d) 
+        unfold_shape = patches_input.size()
+        nb_patches_h, nb_patches_w = unfold_shape[2], unfold_shape[3]
 
-        if conf.cond_y is not None:
-            classes = th.ones(batch_size, dtype=th.long, device=device)
-            model_kwargs["y"] = classes * conf.cond_y
-        else:
-            classes = th.randint(
-                low=0, high=NUM_CLASSES, size=(batch_size,), device=device
-            )
-            model_kwargs["y"] = classes
+        ### Create 2D Hann windows for blending overlapping patches             
+        win1d = torch.hann_window(256)
+        win2d = torch.outer(win1d, win1d.t())
 
-        sample_fn = (
-            diffusion.p_sample_loop if not conf.use_ddim else diffusion.ddim_sample_loop
-        )
+        window_patches = win2d.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(1, 3, nb_patches_h, nb_patches_w, 1, 1)
 
+        
+        torch.cuda.empty_cache()
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        with torch.no_grad():
+            #generated = model.inference(input, mask)
+            ### Process patches individually
+            patches_input = patches_input.squeeze()
+            patches_mask = patches_mask.squeeze(0) # C x I x J x H x W
 
-        result = sample_fn(
-            model_fn,
-            (batch_size, 3, conf.image_size, conf.image_size),
-            clip_denoised=conf.clip_denoised,
-            model_kwargs=model_kwargs,
-            cond_fn=cond_fn,
-            device=device,
-            progress=show_progress,
-            return_all=True,
-            conf=conf
-        )
-        srs = toU8(result['sample'])
-        gts = toU8(result['gt'])
-        lrs = toU8(result.get('gt') * model_kwargs.get('gt_keep_mask') + (-1) *
-                   th.ones_like(result.get('gt')) * (1 - model_kwargs.get('gt_keep_mask')))
+            patches_input = patches_input.permute(1, 2, 0, 3, 4)
+            patches_mask = patches_mask.permute(1, 2, 0, 3, 4) # I x J x C x H x W
 
-        gt_keep_masks = toU8((model_kwargs.get('gt_keep_mask') * 2 - 1))
+            ### Create storage tensor for output restorations
+            temp_input = torch.empty(patches_input.shape) 
+            temp_sample = torch.empty(patches_input.shape) 
+
+            for i in range(nb_patches_h):
+                for j in range (0, nb_patches_w, 8):
+                    if j+8 < nb_patches_w:                      
+                        # temp = model.inference(
+                        #     patches_input[i,j:j+8,:,:,:].to(device, dtype = torch.float),
+                        #     patches_mask[i,j:j+8,:,:,:].to(device, dtype = torch.float)
+                        #     )
+                        model_kwargs = {}
+
+                        model_kwargs["gt"] = patches_input[i,j:j+8,:,:,:].to(device, dtype = torch.float)
+
+                        gt_keep_mask = patches_mask[i,j:j+8,:,:,:].to(device, dtype = torch.float)
+
+                        if gt_keep_mask is not None:
+                            model_kwargs['gt_keep_mask'] = gt_keep_mask
+
+                        batch_size = model_kwargs["gt"].shape[0]
+
+                        if conf.cond_y is not None:
+                            classes = th.ones(batch_size, dtype=th.long, device=device)
+                            model_kwargs["y"] = classes * conf.cond_y
+                        else:
+                            classes = th.randint(
+                                low=0, high=NUM_CLASSES, size=(batch_size,), device=device
+                            )
+                            model_kwargs["y"] = classes
+
+                        sample_fn = (
+                            diffusion.p_sample_loop if not conf.use_ddim else diffusion.ddim_sample_loop
+                        )
+
+                        temp = sample_fn(
+                            model_fn,
+                            (batch_size, 3, conf.image_size, conf.image_size),
+                            clip_denoised=conf.clip_denoised,
+                            model_kwargs=model_kwargs,
+                            cond_fn=cond_fn,
+                            device=device,
+                            progress=show_progress,
+                            return_all=True,
+                            conf=conf
+                        )
+                        temp_input[i,j:j+8,:,:,:] = temp['gt']                
+                        temp_sample[i,j:j+8,:,:,:] = temp['sample']
+                    else:
+                        # temp = model.inference(
+                        #     patches_input[i,j:,:,:,:].to(device, dtype = torch.float),
+                        #     patches_mask[i,j:,:,:,:].to(device, dtype = torch.float)
+                        #     )        
+                        model_kwargs = {}
+
+                        model_kwargs["gt"] = patches_input[i,j:,:,:,:].to(device, dtype = torch.float)
+
+                        gt_keep_mask = patches_mask[i,j:,:,:,:].to(device, dtype = torch.float)
+
+                        if gt_keep_mask is not None:
+                            model_kwargs['gt_keep_mask'] = gt_keep_mask
+
+                        batch_size = model_kwargs["gt"].shape[0]
+
+                        if conf.cond_y is not None:
+                            classes = th.ones(batch_size, dtype=th.long, device=device)
+                            model_kwargs["y"] = classes * conf.cond_y
+                        else:
+                            classes = th.randint(
+                                low=0, high=NUM_CLASSES, size=(batch_size,), device=device
+                            )
+                            model_kwargs["y"] = classes
+
+                        sample_fn = (
+                            diffusion.p_sample_loop if not conf.use_ddim else diffusion.ddim_sample_loop
+                        )
+
+                        temp = sample_fn(
+                            model_fn,
+                            (batch_size, 3, conf.image_size, conf.image_size),
+                            clip_denoised=conf.clip_denoised,
+                            model_kwargs=model_kwargs,
+                            cond_fn=cond_fn,
+                            device=device,
+                            progress=show_progress,
+                            return_all=True,
+                            conf=conf
+                        )
+                        temp_input[i,j:,:,:,:] = temp['gt']
+                        temp_sample[i,j:,:,:,:] = temp['sample']
+            # I x J x C x H x W - > C x I x J x H x W
+        temp_input = temp_input.permute(2, 0, 1, 3, 4)        
+        temp_input = temp_input.unsqueeze(0)                
+        temp_sample = temp_sample.permute(2, 0, 1, 3, 4)        
+        temp_sample = temp_sample.unsqueeze(0)
+
+        temp_input = temp_input * window_patches
+        temp_sample = temp_sample * window_patches
+        
+        temp_input = temp_input.contiguous().view(1, c, -1, k*k)
+        temp_input = temp_input.permute(0, 1, 3, 2)
+        temp_input = temp_input.contiguous().view(1, c*k*k, -1)
+
+        temp_sample = temp_sample.contiguous().view(1, c, -1, k*k)
+        temp_sample = temp_sample.permute(0, 1, 3, 2)
+        temp_sample = temp_sample.contiguous().view(1, c*k*k, -1)
+
+        temp_input = torch.nn.functional.fold(temp_input, output_size=(h, w), kernel_size=k, stride=d)
+        temp_input = temp_input[:, :, hpad:input.size(2)+hpad, wpad:input.size(3)+wpad]
+
+        temp_sample = torch.nn.functional.fold(temp_sample, output_size=(h, w), kernel_size=k, stride=d)
+        temp_sample = temp_sample[:, :, hpad:input.size(2)+hpad, wpad:input.size(3)+wpad]
+
+        srs = toU8((temp_sample.data.cpu() + 1.0) / 2.0)
+        gts = toU8((temp_input.data.cpu() + 1.0) / 2.0)
+        lrs = toU8((temp_input.data.cpu() + 1.0) / 2.0)
+
+        #gt_keep_masks = toU8((model_kwargs.get('gt_keep_mask') * 2 - 1))
+        gt_keep_masks = toU8(mask)
 
         conf.eval_imswrite(
             srs=srs, gts=gts, lrs=lrs, gt_keep_masks=gt_keep_masks,
