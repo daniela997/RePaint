@@ -171,7 +171,7 @@ def main(conf: conf_mgt.Default_Conf):
             patches_mask_copy = torch.clone(patches_mask)
             patches_mask_copy = patches_mask_copy.squeeze().contiguous().view(-1, 256, 256)
             counts_patches = [torch.numel(torch.unique(t)) for t in patches_mask_copy]
-            print("There are {} patches with damage and {} patches without damage in {}.".format(counts_patches.count(1), counts_patches.count(2), batch['GT_name']))
+            print("There are {} patches with damage and {} patches without damage in {}.".format(counts_patches.count(2), counts_patches.count(1), batch['GT_name']))
             ### Create storage tensor for output restorations
             temp_input = torch.empty(patches_input.shape) 
             temp_sample = torch.empty(patches_input.shape) 
