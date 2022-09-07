@@ -155,7 +155,6 @@ def main(conf: conf_mgt.Default_Conf):
         win2d = torch.outer(win1d, win1d.t())
 
         window_patches = win2d.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(1, 3, nb_patches_h, nb_patches_w, 1, 1)
-
         
         torch.cuda.empty_cache()
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -168,7 +167,11 @@ def main(conf: conf_mgt.Default_Conf):
             # B X C x I x J x H x W
             patches_input = patches_input.permute(0, 2, 3, 1, 4, 5)
             patches_mask = patches_mask.permute(0, 2, 3, 1, 4, 5) # I x J x C x H x W
-
+            
+            patches_mask_copy = torch.clone(patches_mask)
+            patches_mask_copy = patches_mask_copy.squeeze().contiguous().view(-1, 256, 256)
+            counts_patches = [torch.numel(torch.unique(t)) for t in patches_mask_copy]
+            print("There are {} patches with damage and {} patches without damage in {}.".format(counts_patches.count(1), counts_patches.count(2), batch['GT_name']))
             ### Create storage tensor for output restorations
             temp_input = torch.empty(patches_input.shape) 
             temp_sample = torch.empty(patches_input.shape) 
@@ -244,12 +247,12 @@ def main(conf: conf_mgt.Default_Conf):
         temp_sample = torch.nn.functional.fold(temp_sample, output_size=(h, w), kernel_size=k, stride=d)
         temp_sample = temp_sample[:, :, hpad:input.size(2)+hpad, wpad:input.size(3)+wpad]
 
-        srs = toU8((temp_sample.data.cpu() + 1.0) / 2.0)
-        gts = toU8((temp_input.data.cpu() + 1.0) / 2.0)
-        lrs = toU8((temp_input.data.cpu() + 1.0) / 2.0)
+        srs = toU8((temp_sample))
+        gts = toU8((temp_input))
+        lrs = toU8((temp_input))
 
         #gt_keep_masks = toU8((model_kwargs.get('gt_keep_mask') * 2 - 1))
-        gt_keep_masks = toU8(mask)
+        gt_keep_masks = toU8(mask * 2 - 1)
 
         conf.eval_imswrite(
             srs=srs, gts=gts, lrs=lrs, gt_keep_masks=gt_keep_masks,
