@@ -123,6 +123,7 @@ def main(conf: conf_mgt.Default_Conf):
                 batch[k] = batch[k].to(device)
 
         input = batch['GT']
+        print("Image size for {} is {}: ".format(batch['GT_name'], input.shape))
         mask = batch.get('gt_keep_mask')
         mask_final = batch.get('gt_keep_mask')
         ### Patchifying input via Torch's unfold
@@ -174,7 +175,7 @@ def main(conf: conf_mgt.Default_Conf):
 
             for i in range(nb_patches_h):
                 for j in range (0, nb_patches_w):
-                    print("Processing patch [{}][{}] out of [{}][{}] for image #{}".format(i, j, nb_patches_h, nb_patches_w, batch))
+                    print("Processing patch [{}][{}] out of [{}][{}] for image {}".format(i, j, nb_patches_h, nb_patches_w, batch['GT_name']))
                     # temp = model.inference(
                     #     patches_input[i,j:j+8,:,:,:].to(device, dtype = torch.float),
                     #     patches_mask[i,j:j+8,:,:,:].to(device, dtype = torch.float)
