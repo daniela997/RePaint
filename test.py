@@ -160,108 +160,71 @@ def main(conf: conf_mgt.Default_Conf):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         with torch.no_grad():
             #generated = model.inference(input, mask)
-            ### Process patches individually
-            patches_input = patches_input.squeeze()
-            patches_mask = patches_mask.squeeze(0) # C x I x J x H x W
-
-            patches_input = patches_input.permute(1, 2, 0, 3, 4)
-            patches_mask = patches_mask.permute(1, 2, 0, 3, 4) # I x J x C x H x W
+            # ### Process patches individually
+            # patches_input = patches_input.squeeze()
+            # patches_mask = patches_mask.squeeze(0) # C x I x J x H x W
+            
+            # B X C x I x J x H x W
+            patches_input = patches_input.permute(0, 2, 3, 1, 4, 5)
+            patches_mask = patches_mask.permute(0, 2, 3, 1, 4, 5) # I x J x C x H x W
 
             ### Create storage tensor for output restorations
             temp_input = torch.empty(patches_input.shape) 
             temp_sample = torch.empty(patches_input.shape) 
 
             for i in range(nb_patches_h):
-                for j in range (0, nb_patches_w, 8):
-                    if j+8 < nb_patches_w:                      
-                        # temp = model.inference(
-                        #     patches_input[i,j:j+8,:,:,:].to(device, dtype = torch.float),
-                        #     patches_mask[i,j:j+8,:,:,:].to(device, dtype = torch.float)
-                        #     )
-                        model_kwargs = {}
+                for j in range (0, nb_patches_w):
+                    print("Processing patch [{}][{}] out of [{}][{}] for image #{}".format(i, j, nb_patches_h, nb_patches_w, batch))
+                    # temp = model.inference(
+                    #     patches_input[i,j:j+8,:,:,:].to(device, dtype = torch.float),
+                    #     patches_mask[i,j:j+8,:,:,:].to(device, dtype = torch.float)
+                    #     )
+                    model_kwargs = {}
 
-                        model_kwargs["gt"] = patches_input[i,j:j+8,:,:,:].to(device, dtype = torch.float)
+                    model_kwargs["gt"] = patches_input[:,i,j,:,:,:].to(device, dtype = torch.float)
 
-                        gt_keep_mask = patches_mask[i,j:j+8,:,:,:].to(device, dtype = torch.float)
+                    gt_keep_mask = patches_mask[:,i,j,:,:,:].to(device, dtype = torch.float)
 
-                        if gt_keep_mask is not None:
-                            model_kwargs['gt_keep_mask'] = gt_keep_mask
+                    if torch.numel(torch.unique(gt_keep_mask)) == 1:
+                        print("There is no damage in this patch, skipping to next one...")
+                        temp_input[:,i,j,:,:,:] = model_kwargs["gt"]                
+                        temp_sample[:,i,j,:,:,:] = model_kwargs["gt"]
+                        continue
 
-                        batch_size = model_kwargs["gt"].shape[0]
+                    if gt_keep_mask is not None:
+                        model_kwargs['gt_keep_mask'] = gt_keep_mask
 
-                        if conf.cond_y is not None:
-                            classes = th.ones(batch_size, dtype=th.long, device=device)
-                            model_kwargs["y"] = classes * conf.cond_y
-                        else:
-                            classes = th.randint(
-                                low=0, high=NUM_CLASSES, size=(batch_size,), device=device
-                            )
-                            model_kwargs["y"] = classes
+                    batch_size = model_kwargs["gt"].shape[0]
 
-                        sample_fn = (
-                            diffusion.p_sample_loop if not conf.use_ddim else diffusion.ddim_sample_loop
-                        )
-
-                        temp = sample_fn(
-                            model_fn,
-                            (batch_size, 3, conf.image_size, conf.image_size),
-                            clip_denoised=conf.clip_denoised,
-                            model_kwargs=model_kwargs,
-                            cond_fn=cond_fn,
-                            device=device,
-                            progress=show_progress,
-                            return_all=True,
-                            conf=conf
-                        )
-                        temp_input[i,j:j+8,:,:,:] = temp['gt']                
-                        temp_sample[i,j:j+8,:,:,:] = temp['sample']
+                    if conf.cond_y is not None:
+                        classes = th.ones(batch_size, dtype=th.long, device=device)
+                        model_kwargs["y"] = classes * conf.cond_y
                     else:
-                        # temp = model.inference(
-                        #     patches_input[i,j:,:,:,:].to(device, dtype = torch.float),
-                        #     patches_mask[i,j:,:,:,:].to(device, dtype = torch.float)
-                        #     )        
-                        model_kwargs = {}
-
-                        model_kwargs["gt"] = patches_input[i,j:,:,:,:].to(device, dtype = torch.float)
-
-                        gt_keep_mask = patches_mask[i,j:,:,:,:].to(device, dtype = torch.float)
-
-                        if gt_keep_mask is not None:
-                            model_kwargs['gt_keep_mask'] = gt_keep_mask
-
-                        batch_size = model_kwargs["gt"].shape[0]
-
-                        if conf.cond_y is not None:
-                            classes = th.ones(batch_size, dtype=th.long, device=device)
-                            model_kwargs["y"] = classes * conf.cond_y
-                        else:
-                            classes = th.randint(
-                                low=0, high=NUM_CLASSES, size=(batch_size,), device=device
-                            )
-                            model_kwargs["y"] = classes
-
-                        sample_fn = (
-                            diffusion.p_sample_loop if not conf.use_ddim else diffusion.ddim_sample_loop
+                        classes = th.randint(
+                            low=0, high=NUM_CLASSES, size=(batch_size,), device=device
                         )
+                        model_kwargs["y"] = classes
 
-                        temp = sample_fn(
-                            model_fn,
-                            (batch_size, 3, conf.image_size, conf.image_size),
-                            clip_denoised=conf.clip_denoised,
-                            model_kwargs=model_kwargs,
-                            cond_fn=cond_fn,
-                            device=device,
-                            progress=show_progress,
-                            return_all=True,
-                            conf=conf
-                        )
-                        temp_input[i,j:,:,:,:] = temp['gt']
-                        temp_sample[i,j:,:,:,:] = temp['sample']
-            # I x J x C x H x W - > C x I x J x H x W
-        temp_input = temp_input.permute(2, 0, 1, 3, 4)        
-        temp_input = temp_input.unsqueeze(0)                
-        temp_sample = temp_sample.permute(2, 0, 1, 3, 4)        
-        temp_sample = temp_sample.unsqueeze(0)
+                    sample_fn = (
+                        diffusion.p_sample_loop if not conf.use_ddim else diffusion.ddim_sample_loop
+                    )
+
+                    temp = sample_fn(
+                        model_fn,
+                        (batch_size, 3, conf.image_size, conf.image_size),
+                        clip_denoised=conf.clip_denoised,
+                        model_kwargs=model_kwargs,
+                        cond_fn=cond_fn,
+                        device=device,
+                        progress=show_progress,
+                        return_all=True,
+                        conf=conf
+                    )
+                    temp_input[:,i,j,:,:,:] = temp['gt']                
+                    temp_sample[:,i,j,:,:,:] = temp['sample']
+        # B x I x J x C x H x W - > B x C x I x J x H x W
+        temp_input = temp_input.permute(0, 3, 1, 2, 4, 5)        
+        temp_sample = temp_sample.permute(0, 3, 1, 2, 4, 5)        
 
         temp_input = temp_input * window_patches
         temp_sample = temp_sample * window_patches
