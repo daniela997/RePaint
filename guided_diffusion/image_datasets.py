@@ -160,16 +160,17 @@ class ImageDatasetInpa(Dataset):
         mask_path = self.local_masks[idx]
         pil_mask = self.imread(mask_path)
 
-        if self.random_crop:
-            raise NotImplementedError()
-        else:
-            arr_gt = center_crop_arr(pil_gt, self.resolution)
-            arr_mask = center_crop_arr(pil_mask, self.resolution)
+        # if self.random_crop:
+        #     raise NotImplementedError()
+        # else:
+        #     arr_gt = center_crop_arr(pil_gt, self.resolution)
+        #     arr_mask = center_crop_arr(pil_mask, self.resolution)
 
-        if self.random_flip and random.random() < 0.5:
-            arr_gt = arr_gt[:, ::-1]
-            arr_mask = arr_mask[:, ::-1]
-
+        # if self.random_flip and random.random() < 0.5:
+        #     arr_gt = arr_gt[:, ::-1]
+        #     arr_mask = arr_mask[:, ::-1]
+        arr_gt = np.array(pil_gt)
+        arr_mask = np.array(pil_mask)
         arr_gt = arr_gt.astype(np.float32) / 127.5 - 1
         arr_mask = arr_mask.astype(np.float32) / 255.0
 
