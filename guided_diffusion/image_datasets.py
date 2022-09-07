@@ -159,6 +159,7 @@ class ImageDatasetInpa(Dataset):
 
         mask_path = self.local_masks[idx]
         pil_mask = self.imread(mask_path)
+        pil_mask = pil_mask.convert('L')
 
         # if self.random_crop:
         #     raise NotImplementedError()
@@ -170,9 +171,12 @@ class ImageDatasetInpa(Dataset):
         #     arr_gt = arr_gt[:, ::-1]
         #     arr_mask = arr_mask[:, ::-1]
         arr_gt = np.array(pil_gt)
-        arr_mask = np.array(pil_mask)
+        if arr_mask.ndim==2:
+            arr_mask = np.expand_dims(np.array(pil_mask), axis=2)
         arr_gt = arr_gt.astype(np.float32) / 127.5 - 1
         arr_mask = arr_mask.astype(np.float32) / 255.0
+        #arr_mask = np.ones_like(arr_mask) - arr_mask
+        #arr_mask = arr_mask.astype(np.float32)
 
         out_dict = {}
         if self.local_classes is not None:
