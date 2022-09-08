@@ -126,6 +126,7 @@ def main(conf: conf_mgt.Default_Conf):
         print("Image size for {} is {}: ".format(batch['GT_name'], input.shape))
         mask = batch.get('gt_keep_mask')
         mask_final = batch.get('gt_keep_mask')
+        mask_final = mask_final.repeat(1, 3, 1, 1)
         ### Patchifying input via Torch's unfold
         
         # kernel size for window/patch
@@ -159,7 +160,7 @@ def main(conf: conf_mgt.Default_Conf):
         torch.cuda.empty_cache()
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         with torch.no_grad():
-            #generated = model.inference(input, mask)
+            # generated = model.inference(input, mask)
             # ### Process patches individually
             # patches_input = patches_input.squeeze()
             # patches_mask = patches_mask.squeeze(0) # C x I x J x H x W
@@ -167,7 +168,6 @@ def main(conf: conf_mgt.Default_Conf):
             # B X C x I x J x H x W
             patches_input = patches_input.permute(0, 2, 3, 1, 4, 5)
             patches_mask = patches_mask.permute(0, 2, 3, 1, 4, 5) # I x J x C x H x W
-            
             patches_mask_copy = torch.clone(patches_mask)
             patches_mask_copy = patches_mask_copy.squeeze().contiguous().view(-1, 256, 256)
             counts_patches = [torch.numel(torch.unique(t)) for t in patches_mask_copy]
@@ -251,9 +251,9 @@ def main(conf: conf_mgt.Default_Conf):
         gts = toU8((temp_input))
         lrs = toU8((temp_input))
 
-        #gt_keep_masks = toU8((model_kwargs.get('gt_keep_mask') * 2 - 1))
-        gt_keep_masks = toU8(mask * 2 - 1)
 
+        #gt_keep_masks = toU8((model_kwargs.get('gt_keep_mask') * 2 - 1))
+        gt_keep_masks = toU8(mask_final * 2 - 1)
         conf.eval_imswrite(
             srs=srs, gts=gts, lrs=lrs, gt_keep_masks=gt_keep_masks,
             img_names=batch['GT_name'], dset=dset, name=eval_name, verify_same=False)
