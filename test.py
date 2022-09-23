@@ -157,6 +157,43 @@ def main(conf: conf_mgt.Default_Conf):
 
         window_patches = win2d.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(1, 3, nb_patches_h, nb_patches_w, 1, 1)
         
+        window_size =256
+        step = window_size >> 1
+        window = win2d.numpy()
+        window_u = np.vstack([np.tile(window[step:step+1, :], (step, 1)), window[step:, :]])
+        window_b = np.vstack([window[:step, :], np.tile(window[step:step+1, :], (step, 1))])
+        window_l = np.hstack([np.tile(window[:, step:step+1], (1, step)), window[:, step:]])
+        window_r = np.hstack([window[:, :step], np.tile(window[:, step:step+1], (1, step))])
+        window_ul = np.block([
+            [np.ones((step, step)), window_u[:step, step:]],
+            [window_l[step:, :step], window_l[step:, step:]]])
+        window_ur = np.block([
+            [window_u[:step, :step], np.ones((step, step))],
+            [window_r[step:, :step], window_r[step:, step:]]])
+        window_bl = np.block([
+            [window_l[:step, :step], window_l[:step, step:]],
+            [np.ones((step, step)), window_b[step:, step:]]])
+        window_br = np.block([
+            [window_r[:step, :step], window_r[:step, step:]],
+            [window_b[step:, :step], np.ones((step, step))]])
+        windows =  np.array([
+            [ window_ul, window_u, window_ur ],
+            [ window_l,  window,   window_r  ],
+            [ window_bl, window_b, window_br ],
+        ])
+        
+        windows = torch.from_numpy(windows)
+        
+        window_patches[:, :, 0, 0, :, :] = windows[0, 0]
+        window_patches[:, :, -1, -1, :, :] = windows[-1, -1]
+        window_patches[:, :, 0, -1, :, :] = windows[0, -1]
+        window_patches[:, :, -1, 0, :, :] = windows[-1, 0]
+
+        window_patches[:, :, 0, 1:-1, :, :] = windows[0, 1:-1]
+        window_patches[:, :, -1, 1:-1, :, :] = windows[-1, 1:-1]
+        window_patches[:, :, 1:-1, 0, :, :] = windows[1:-1, 0]
+        window_patches[:, :, 1:-1, -1, :, :] = windows[1:-1, -1]
+       
         torch.cuda.empty_cache()
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         with torch.no_grad():
