@@ -28,6 +28,7 @@ import time
 import conf_mgt
 from utils import yamlread
 from guided_diffusion import dist_util
+import numpy as np
 
 # Workaround
 try:
@@ -137,9 +138,9 @@ def main(conf: conf_mgt.Default_Conf):
         ### Pad images to multiple of the window size
         
         #hpadding
-        hpad = (k-input.size(2)%k) // 2 
+        hpad = (k-input.size(2)%k) // 2 + 256
         #wpadding
-        wpad = (k-input.size(3)%k) // 2 
+        wpad = (k-input.size(3)%k) // 2 + 256
 
         x = torch.nn.functional.pad(input,(wpad,wpad,hpad,hpad), mode='reflect') 
         c, h, w = x.size(1), x.size(2), x.size(3)
@@ -157,7 +158,7 @@ def main(conf: conf_mgt.Default_Conf):
 
         window_patches = win2d.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0).repeat(1, 3, nb_patches_h, nb_patches_w, 1, 1)
         
-        window_size =256
+        window_size = 256
         step = window_size >> 1
         window = win2d.numpy()
         window_u = np.vstack([np.tile(window[step:step+1, :], (step, 1)), window[step:, :]])
@@ -212,7 +213,7 @@ def main(conf: conf_mgt.Default_Conf):
             ### Create storage tensor for output restorations
             temp_input = torch.empty(patches_input.shape) 
             temp_sample = torch.empty(patches_input.shape) 
-
+            k = counts_patches.count(2)
             for i in range(nb_patches_h):
                 for j in range (0, nb_patches_w):
                     print("Processing patch [{}][{}] out of [{}][{}] for image {}".format(i, j, nb_patches_h, nb_patches_w, batch['GT_name']))
@@ -263,6 +264,8 @@ def main(conf: conf_mgt.Default_Conf):
                     )
                     temp_input[:,i,j,:,:,:] = temp['gt']                
                     temp_sample[:,i,j,:,:,:] = temp['sample']
+                    print("{} patches left to process".format(k))
+                    k = k-1
         # B x I x J x C x H x W - > B x C x I x J x H x W
         temp_input = temp_input.permute(0, 3, 1, 2, 4, 5)        
         temp_sample = temp_sample.permute(0, 3, 1, 2, 4, 5)        
